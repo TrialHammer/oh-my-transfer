@@ -1,0 +1,39 @@
+# 本服标识。其他服务器 servers 下指向本服的键名必须与之一致，
+# 目标服务器会校验票据中的 target 是否等于自己的 server-id。
+server-id: lobby
+
+# HMAC-SHA256 共享密钥（Base64，解码后至少 32 字节）。
+# 留空时插件首次启动会自动生成并写回本文件；请把同一个值复制到所有服务器。
+secret: ""
+
+# 存放票据的 cookie 键（namespace:key）。
+cookie-key: "omt:ticket"
+
+# 票据有效期，以及允许的服务器间时钟偏差（秒）。
+ticket-ttl-seconds: 30
+clock-skew-seconds: 5
+
+# 作为目标服务器（接收方）时的行为。
+# 注意：目标服务器 server.properties 必须设置 accepts-transfers=true。
+receiver:
+  # true：没有有效票据的玩家（包括直连的）一律拒绝。
+  # false：没有票据的玩家放行；带了票据但校验失败的仍然拒绝。
+  # 大厅等需要玩家直连的服务器请设为 false。
+  require-ticket: true
+  # 如何确认进服的玩家就是票据的持有人：
+  #   uuid         - UUID 必须一致（所有服务器 UUID 体系相同时使用，最严格）
+  #   name         - 玩家名必须一致（区分大小写），适用于正版/离线混用、外置登录等 UUID 不一致的情况
+  #   uuid-or-name - 两者任一一致即可
+  match-by: uuid
+  # 即使 require-ticket 为 true 也允许直连的玩家 UUID。
+  bypass-uuids: []
+  # 等待客户端返回 cookie 的超时（毫秒）。
+  cookie-timeout-millis: 3000
+  # 拒绝时显示给玩家的消息（MiniMessage 格式）。
+  deny-message: "<red>请通过服务器传送进入本服。</red>"
+
+# 可传送的目标服务器：/omt <player> <键名>
+servers:
+  survival:
+    host: "127.0.0.1"
+    port: 25566

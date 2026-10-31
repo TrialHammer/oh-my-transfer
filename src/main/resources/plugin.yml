@@ -1,0 +1,15 @@
+name: OhMyTransfer
+version: '${project.version}'
+main: ink.ziip.ohmytransfer.OhMyTransferPlugin
+api-version: '1.21.7'
+description: Transfer players between servers with HMAC-signed cookie tickets.
+
+# /omt is registered through Paper's Brigadier API (LifecycleEvents.COMMANDS),
+# so it is intentionally not declared under `commands:`.
+permissions:
+  omt.use:
+    description: Allows /omt <player> <server> and /omt reload
+    default: op
+  omt.self:
+    description: Allows /omt <server> to transfer yourself
+    default: op
