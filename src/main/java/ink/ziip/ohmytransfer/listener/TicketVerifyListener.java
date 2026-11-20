@@ -7,11 +7,13 @@ import ink.ziip.ohmytransfer.ticket.TicketCodec;
 import ink.ziip.ohmytransfer.ticket.TicketRejectedException;
 import ink.ziip.ohmytransfer.ticket.TransferTicket;
 import io.papermc.paper.connection.PlayerConfigurationConnection;
-import io.papermc.paper.event.connection.PlayerConnectionValidateLoginEvent;
+import io.papermc.paper.connection.PlayerLoginConnection;
 import io.papermc.paper.event.connection.configuration.AsyncPlayerConnectionConfigureEvent;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 
 import java.util.Map;
 import java.util.UUID;
@@ -21,108 +23,118 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Receiving side: reads the ticket cookie while the player is in the configuration phase and refuses
- * players without a valid ticket before they enter the world.
+ * Receiving side: reads the ticket cookie during the login phase and refuses
+ * players without a valid ticket before they can finish logging in.
  *
- * <p>The check runs in {@link AsyncPlayerConnectionConfigureEvent}, which is async and holds the connection
- * until it returns. A denied player is disconnected there, and the verdict is also enforced via
- * {@link PlayerConnectionValidateLoginEvent} when the player exits configuration, as Paper documents that
- * disconnecting during connection events may be unreliable.
+ * <p>Paper fires {@link AsyncPlayerPreLoginEvent} on an async authenticator
+ * thread and holds the login until the listener returns, while
+ * {@link PlayerLoginConnection#retrieveCookie} is explicitly supported during
+ * the login phase. Blocking on the cookie future here therefore gates the
+ * connection at PreLogin, before the player ever enters configuration or the
+ * world.</p>
+ *
+ * <p>The ticket cookie is cleared as soon as the connection reaches the
+ * configuration phase (with a join-time fallback), so a consumed ticket cannot
+ * be presented again on a later connection.</p>
  */
 public final class TicketVerifyListener implements Listener {
 
-    private static final long VERDICT_TTL_MILLIS = 60_000;
-
-    private record Verdict(boolean allowed, long createdAtMillis) {
-    }
+    private static final long CLEAR_COOKIE_TTL_MILLIS = 60_000;
 
     private final OhMyTransferPlugin plugin;
     private final NonceCache nonces;
-    private final Map<UUID, Verdict> verdicts = new ConcurrentHashMap<>();
+    /** Players whose validated ticket cookie should be cleared at the next writable phase. */
+    private final Map<UUID, Long> pendingCookieClears = new ConcurrentHashMap<>();
 
     public TicketVerifyListener(OhMyTransferPlugin plugin, NonceCache nonces) {
         this.plugin = plugin;
         this.nonces = nonces;
     }
 
-    @EventHandler
-    public void onConfigure(AsyncPlayerConnectionConfigureEvent event) {
-        PlayerConfigurationConnection connection = event.getConnection();
-        UUID playerId = connection.getProfile().getId();
-        if (playerId == null || isReconfiguring(playerId)) {
-            return;
-        }
-
-        Settings settings = plugin.settings();
-        boolean allowed = check(connection, settings, playerId);
-        verdicts.put(playerId, new Verdict(allowed, System.currentTimeMillis()));
-        if (!allowed) {
-            connection.disconnect(settings.denyMessage());
-        }
-    }
-
     @EventHandler(priority = EventPriority.HIGH)
-    public void onValidateLogin(PlayerConnectionValidateLoginEvent event) {
-        if (!(event.getConnection() instanceof PlayerConfigurationConnection connection)) {
-            return;
-        }
-        UUID playerId = connection.getProfile().getId();
-        if (playerId == null || isReconfiguring(playerId)) {
+    public void onPreLogin(AsyncPlayerPreLoginEvent event) {
+        if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) {
             return;
         }
 
+        UUID playerId = event.getUniqueId();
+        String name = event.getName();
         Settings settings = plugin.settings();
-        Verdict verdict = verdicts.remove(playerId);
-        boolean allowed = verdict != null
-                ? verdict.allowed()
-                : !settings.requireTicket() || settings.bypassUuids().contains(playerId);
-        if (!allowed) {
-            event.kickMessage(settings.denyMessage());
-        }
-    }
 
-    public void purgeStaleVerdicts(long nowMillis) {
-        verdicts.values().removeIf(v -> v.createdAtMillis() + VERDICT_TTL_MILLIS < nowMillis);
-    }
-
-    /** Players that are already in the world and re-enter configuration were checked when they joined. */
-    private boolean isReconfiguring(UUID playerId) {
-        return plugin.getServer().getPlayer(playerId) != null;
-    }
-
-    private boolean check(PlayerConfigurationConnection connection, Settings settings, UUID playerId) {
-        String name = connection.getProfile().getName();
         if (settings.bypassUuids().contains(playerId)) {
             plugin.getLogger().info("Allowed " + name + ": bypass UUID");
-            return true;
+            return;
         }
 
+        PlayerLoginConnection connection = event.getConnection();
+        if (connection == null) {
+            // Only possible for legacy internal callers that construct the event without a connection.
+            plugin.getLogger().warning("Denied " + name + ": PreLogin event has no login connection");
+            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, settings.denyMessage());
+            return;
+        }
         byte[] cookie = fetchCookie(connection, settings, name);
         if (cookie == null || cookie.length == 0) {
             if (settings.requireTicket()) {
                 plugin.getLogger().info("Denied " + name + ": no ticket (transferred="
-                        + connection.isTransferred() + ")");
-                return false;
+                        + event.isTransferred() + ")");
+                event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, settings.denyMessage());
             }
-            return true;
+            return;
         }
 
         try {
             TransferTicket ticket = TicketCodec.decode(cookie, settings.secret());
             TicketCodec.validate(ticket, settings.serverId(), playerId, name, settings.identityMatch(),
                     System.currentTimeMillis(), settings.clockSkewMillis(), nonces);
-            // Overwrite the consumed ticket so it is not presented again on a later transfer.
-            connection.storeCookie(settings.cookieKey(), new byte[0]);
+            pendingCookieClears.put(playerId, System.currentTimeMillis());
             plugin.getLogger().info("Allowed " + name + ": valid ticket from " + ticket.issuerId());
-            return true;
         } catch (TicketRejectedException e) {
             plugin.getLogger().warning("Denied " + name + ": " + e.getMessage());
-            return false;
+            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, settings.denyMessage());
         }
     }
 
+    /**
+     * Clears the consumed ticket as soon as the connection reaches the
+     * configuration phase, where the cookie API is writable again. This keeps
+     * the replay window closed even if the client disconnects before joining.
+     */
+    @EventHandler
+    public void onConfigure(AsyncPlayerConnectionConfigureEvent event) {
+        PlayerConfigurationConnection connection = event.getConnection();
+        UUID playerId = connection.getProfile().getId();
+        if (playerId == null || pendingCookieClears.remove(playerId) == null) {
+            return;
+        }
+        try {
+            connection.storeCookie(plugin.settings().cookieKey(), new byte[0]);
+        } catch (IllegalStateException e) {
+            plugin.getLogger().fine("Could not clear ticket cookie for "
+                    + connection.getProfile().getName() + ": " + e.getMessage());
+        }
+    }
+
+    /** Fallback for any join path that skips the configuration phase. */
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        if (pendingCookieClears.remove(event.getPlayer().getUniqueId()) == null) {
+            return;
+        }
+        try {
+            event.getPlayer().storeCookie(plugin.settings().cookieKey(), new byte[0]);
+        } catch (IllegalStateException e) {
+            plugin.getLogger().fine("Could not clear ticket cookie for "
+                    + event.getPlayer().getName() + ": " + e.getMessage());
+        }
+    }
+
+    public void purgeStaleCookieClears(long nowMillis) {
+        pendingCookieClears.values().removeIf(createdAt -> createdAt + CLEAR_COOKIE_TTL_MILLIS < nowMillis);
+    }
+
     /** Returns the ticket cookie, or {@code null} if the client has none or did not answer in time. */
-    private byte[] fetchCookie(PlayerConfigurationConnection connection, Settings settings, String name) {
+    private byte[] fetchCookie(PlayerLoginConnection connection, Settings settings, String name) {
         try {
             return connection.retrieveCookie(settings.cookieKey())
                     .get(settings.cookieTimeoutMillis(), TimeUnit.MILLISECONDS);

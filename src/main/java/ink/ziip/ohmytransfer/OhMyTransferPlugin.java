@@ -51,7 +51,7 @@ public final class OhMyTransferPlugin extends JavaPlugin {
         getServer().getScheduler().runTaskTimerAsynchronously(this, () -> {
             long now = System.currentTimeMillis();
             nonces.purgeExpired(now);
-            listener.purgeStaleVerdicts(now);
+            listener.purgeStaleCookieClears(now);
         }, PURGE_INTERVAL_TICKS, PURGE_INTERVAL_TICKS);
     }
 

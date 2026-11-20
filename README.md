@@ -11,7 +11,7 @@
 
 | 项目 | 要求 |
 | --- | --- |
-| 服务端 | Paper 1.21.7 起，使用其配置阶段事件 API |
+| 服务端 | Paper 1.21.7 起，使用其登录阶段（PreLogin）Cookie API |
 | 运行时 | Java 21 起，具体版本遵循所用 Paper 的要求 |
 | 客户端 | 支持 Transfer / Cookie 的 Java 版客户端（协议自 1.20.5 引入），且与目标服务器版本兼容 |
 | 构建工具 | JDK 21+、Maven 3.9+ |
@@ -136,9 +136,9 @@ servers:
 ## 工作原理
 
 1. 源服务器生成票据，写入玩家的 `omt:ticket` Cookie，再发送 Transfer 请求。
-2. 客户端连接目标服务器，在配置阶段返回票据。
-3. 目标服务器校验签名、格式版本、目标标识、玩家身份、有效期及 nonce。
-4. 校验通过后记录 nonce 并清空票据 Cookie，随后允许玩家进入世界；失败则断开连接。
+2. 客户端连接目标服务器，在登录阶段（`AsyncPlayerPreLoginEvent`）返回票据。
+3. 目标服务器在 PreLogin 校验签名、格式版本、目标标识、玩家身份、有效期及 nonce。
+4. 校验通过后记录 nonce 并放行登录；玩家进服后清空票据 Cookie。失败则在 PreLogin 直接断开连接。
 
 票据使用二进制格式，包含版本号、签发服务器、目标服务器、玩家 UUID、玩家名、签发时间、过期时间、16 字节 nonce 和 32 字节 HMAC-SHA256。编码定义见 [TicketCodec.java](src/main/java/ink/ziip/ohmytransfer/ticket/TicketCodec.java)。
 
@@ -166,7 +166,7 @@ src/main/java/ink/ziip/ohmytransfer/
 ├── OhMyTransferPlugin.java   插件入口与配置加载
 ├── command/                 命令注册与补全
 ├── config/                  配置解析与新增配置项补全
-├── listener/                配置阶段票据校验
+├── listener/                PreLogin 票据校验
 └── ticket/                  票据编解码、签名与防重放
 src/main/resources/          插件描述与默认配置
 src/test/java/               票据、配置升级与命令路由测试
