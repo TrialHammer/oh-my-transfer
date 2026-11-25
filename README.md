@@ -14,6 +14,9 @@
 | 服务端 | Paper 1.21.7 起，使用其登录阶段（PreLogin）Cookie API |
 | 运行时 | Java 21 起，具体版本遵循所用 Paper 的要求 |
 | 客户端 | 支持 Transfer / Cookie 的 Java 版客户端（协议自 1.20.5 引入），且与目标服务器版本兼容 |
+| Floodgate（可选） | 安装后可让 Floodgate 基岩版玩家免票据直连；需在接收服安装 |
+| 地图模组（可选） | Xaero's Minimap、Xaero's World Map、Diorama、JourneyMap、VoxelMap；纯客户端 mod 即可 |
+| 跨服传送门（可选） | Wormholes 3.1.5 已验证，使用原生 Transfer |
 | 构建工具 | JDK 21+、Maven 3.9+ |
 
 项目以 Paper `1.21.7-R0.1-SNAPSHOT` API 编译，生成 Java 21 字节码。部署到其他 Paper 版本时，请确认 API 兼容性。
@@ -71,6 +74,8 @@ servers:
 
 ## 命令与权限
 
+`/server` 是 `/omt` 的别名，支持下表的所有用法，权限相同。如果其他插件已占用 `/server`，可以使用 `/ohmytransfer:server` 或 `/omt`。
+
 | 命令 | 权限 | 默认授权 | 说明 |
 | --- | --- | --- | --- |
 | `/omt <server>` | `omt.self` | OP | 将自己传送到指定服务器 |
@@ -80,6 +85,8 @@ servers:
 普通玩家需要通过权限插件获得 `omt.self` 才能自行传送。控制台可以使用管理员命令。
 
 服务器名来自 `servers` 配置，自动补全会排除当前服务器。有两个权限的玩家执行 `/omt survival` 时会传送自己；要传送同名玩家，使用完整的 `/omt survival <server>`。
+
+通过 PlugManX 热加载时，OMT 会恢复 `/omt`、`/server` 及其带命名空间的命令，不再需要额外执行 `minecraft:reload`。如果 `/server` 已被占用，仍可使用 `/ohmytransfer:server`。只修改 OMT 配置时，用 `/omt reload` 即可。
 
 ## 配置
 
@@ -96,8 +103,20 @@ receiver:
   require-ticket: true
   match-by: uuid
   bypass-uuids: []
+  floodgate-bypass: true
   cookie-timeout-millis: 3000
   deny-message: "<red>请通过服务器传送进入本服。</red>"
+
+map-compat:
+  enabled: false
+  xaero: true
+  world-info: true
+  join-repeat: 3
+  voxelmap-server-identity: ""
+
+wormholes:
+  enabled: true
+  server-map: {}
 
 servers:
   survival:
@@ -115,8 +134,16 @@ servers:
 | `receiver.require-ticket` | `true` 时拒绝缺少票据的连接；`false` 时允许无票据直连，但仍拒绝无效票据 |
 | `receiver.match-by` | 玩家身份匹配方式，见下表 |
 | `receiver.bypass-uuids` | 跳过票据校验的玩家 UUID 列表 |
+| `receiver.floodgate-bypass` | Floodgate 基岩版玩家免票据验证直连；默认 `true`，仅在安装 Floodgate 时生效 |
 | `receiver.cookie-timeout-millis` | 等待客户端返回 Cookie 的超时，默认 3000 毫秒 |
 | `receiver.deny-message` | 拒绝连接时的提示，支持 MiniMessage |
+| `map-compat.enabled` | 启用地图模组世界 ID 兼容；默认关闭 |
+| `map-compat.xaero` | 向 Xaero's Minimap、Xaero's World Map、Diorama 发送世界 ID |
+| `map-compat.world-info` | 处理 JourneyMap、VoxelMap 的 `worldinfo:world_id` 请求 |
+| `map-compat.join-repeat` | 进服时 Xaero / Diorama 世界 ID 的初发与补发总次数，范围 1–5 |
+| `map-compat.voxelmap-server-identity` | 支持该设置的 VoxelMap 客户端可跨地址共用地图根目录。默认为空，格式为 1–64 位小写字母、数字、`_` 或 `-`，首位需为字母或数字 |
+| `wormholes.enabled` | 安装 Wormholes 时启用跨服门签票，默认开启 |
+| `wormholes.server-map` | Wormholes 对端名到 OMT 目标 ID 的映射，区分大小写。未配置的对端使用同名 ID |
 | `servers` | 可传送目标的名称、地址和端口 |
 
 服务器名称只允许字母、数字、`_`、`-`、`+`，不能使用保留名称 `reload`（不区分大小写）。可以在所有服务器使用同一份目标列表，插件会排除向自身传送。
@@ -128,6 +155,40 @@ servers:
 | `uuid` | UUID 一致 | 各服使用相同的玩家 UUID 体系，默认值 |
 | `name` | 玩家名一致，区分大小写 | 各服因登录方式不同而产生不同 UUID |
 | `uuid-or-name` | UUID 或玩家名任一一致 | 混合身份体系 |
+
+### Floodgate 支持
+
+安装 Floodgate 后，`receiver.floodgate-bypass: true` 会让 Floodgate 玩家在目标服务器免票据验证直连。该判断使用 Floodgate API 的玩家记录，不会仅凭 UUID 形态放行普通 Java 玩家。未安装 Floodgate 时此选项不起作用；设为 `false` 后 Floodgate 玩家与其他玩家一样必须携带有效票据。
+
+### 地图模组兼容
+
+在需要兼容的每台后端服务器设置 `map-compat.enabled: true`，再让客户端重新连接。Xaero's Minimap、Xaero's World Map 和 Diorama 会在频道注册、切世界或重生时收到世界 ID。JourneyMap 和 VoxelMap 首次请求后，切世界时会收到相同格式的世界 ID。
+
+世界 ID 由 `server-id` 和世界 UUID 计算，两个值不变时重启不会改 ID。原版主世界、下界和末地共享同一个 ID，各维度仍分别存储地图。旧版 Paper 或多世界插件的同名前缀维度仍支持按 `_nether` / `_the_end` 归组。
+
+- **Xaero、Diorama、JourneyMap** 仍由客户端按服务器条目（地址或条目名称）区分地图根目录。原版 26.3 的 Transfer 会保留最初的服务器条目，只改变实际连接的后端地址。因此建议玩家从固定入口进入，再用 `/server` 切服。从另一条目直连同一后端时，世界 ID 不会合并两个根目录。Xaero World Map 若仍用手动选图，可在地图左下角切到 Server 模式，并重新绑定旧地图。
+- **新版 VoxelMap** 支持服务端指定地图根目录。要让多个地址共用根目录，在对应后端设置相同的 `voxelmap-server-identity`（例如 `my-network`）。各后端仍应保留不同的 `server-id`，避免不同世界串图。首次启用前建议备份客户端地图。VoxelMap 可能迁移已有地址的数据，但不会合并多个地址已有的地图。
+
+首次启用世界 ID 后，旧地图和路标可能还在原目录，需要按模组对应的迁移方式恢复。
+
+装有 MapModCompanion 时，OhMyTransfer 不重复发送对应的 Xaero 和 `worldinfo` 世界 ID。装有 JourneyMap Paper 插件时，由它独占共享的 `worldinfo` 频道。装有 VoxelMap Paper 插件时，请在该插件配置中设置 `serverIdentity`，OhMyTransfer 不覆盖已注册 `voxelmap:settings` 的客户端世界名。如果同一客户端同时运行 JourneyMap 和 VoxelMap，共享频道不能只发给其中一个模组。
+
+### Wormholes 跨服门
+
+1. 两端安装 OMT 和 Wormholes。保留目标服现有的 `receiver.require-ticket: true`、身份匹配规则，以及 `server.properties` 中的 `accepts-transfers=true`。互通两端的 OMT 密钥和 cookie 键必须一致。
+2. 用 Wormholes 正常建立对端和跨服门。保持其 `wormholes.toml` 的 `[main].traversal-api-enabled = true`，建议在 `[network]` 设置 `transfer-mode = "packet"`。代理转服不会把原生 Transfer cookie 带到目标后端，桥接会取消这类穿越。 [Wormholes 网络配置](https://docs.volmitsoftware.com/wormholes/01-installation-configuration)
+3. 将对端的 OMT `server-id` 配成源服 `servers` 下的键。如果名称不同，例如 Wormholes 对端叫 `survival-gateway`，而 OMT ID 是 `survival`，在源服加上如下映射。双向门需要分别配置两个方向。
+
+```yaml
+wormholes:
+  enabled: true
+  server-map:
+    survival-gateway: survival
+```
+
+目标 Wormholes 确认准入后，源服 OMT 在可取消的穿越事件中签票并提交 cookie。源服安装 AuthMe 时，玩家须已登录，AuthMe API 不可用也会取消穿越。未知目标、无效映射或写票失败都会取消并提示。Wormholes 仍负责投影、连接地址、转服、落点和回执。同服门以及原有 `/omt` 用法不受影响。
+
+`/wh server connect <对端>` 和 `/wh server <对端>` 不触发穿越事件，桥接开启时会阻止玩家直接使用这些命令。请走跨服门，或用 `/omt <目标 ID>` 普通转服。Wormholes 内部在落点被拒后尝试自动返回、其他插件直接调用其内部转服 API 等非穿越路径也不签票，要求票据的后端会拒绝这些无票连接。
 
 ### 配置升级
 
@@ -167,6 +228,7 @@ src/main/java/ink/ziip/ohmytransfer/
 ├── command/                 命令注册与补全
 ├── config/                  配置解析与新增配置项补全
 ├── listener/                PreLogin 票据校验
+├── map/                     地图模组世界 ID 兼容
 └── ticket/                  票据编解码、签名与防重放
 src/main/resources/          插件描述与默认配置
 src/test/java/               票据、配置升级与命令路由测试

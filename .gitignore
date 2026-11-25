@@ -19,3 +19,8 @@ Thumbs.db
 
 # Local test servers
 run/
+
+# Local dependencies and distribution artifacts
+/libs/
+/dist/
+*.jar

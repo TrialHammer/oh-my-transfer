@@ -3,9 +3,16 @@ version: '${project.version}'
 main: ink.ziip.ohmytransfer.OhMyTransferPlugin
 api-version: '1.21.7'
 description: Transfer players between servers with HMAC-signed cookie tickets.
+softdepend:
+  - floodgate
+  - MapModCompanion
+  - journeymap
+  - VoxelMap
+  - Wormholes
+  - AuthMe
 
-# /omt is registered through Paper's Brigadier API (LifecycleEvents.COMMANDS),
-# so it is intentionally not declared under `commands:`.
+# /omt is registered at runtime through Paper's Brigadier lifecycle, with a command-map
+# fallback for plugin hot loads that do not fire the lifecycle event.
 permissions:
   omt.use:
     description: Allows /omt <player> <server> and /omt reload

@@ -23,6 +23,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <paper.version>1.21.7-R0.1-SNAPSHOT</paper.version>
+        <floodgate.version>2.2.5-SNAPSHOT</floodgate.version>
         <junit.version>5.11.4</junit.version>
     </properties>
 
@@ -30,6 +31,10 @@
         <repository>
             <id>papermc</id>
             <url>https://repo.papermc.io/repository/maven-public/</url>
+        </repository>
+        <repository>
+            <id>opencollab-snapshots</id>
+            <url>https://repo.opencollab.dev/maven-snapshots</url>
         </repository>
     </repositories>
 
@@ -39,6 +44,18 @@
             <artifactId>paper-api</artifactId>
             <version>${paper.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.geysermc.floodgate</groupId>
+            <artifactId>api</artifactId>
+            <version>${floodgate.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.geysermc.cumulus</groupId>
+                    <artifactId>cumulus</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

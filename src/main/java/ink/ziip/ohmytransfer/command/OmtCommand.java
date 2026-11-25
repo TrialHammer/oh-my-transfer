@@ -10,8 +10,7 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import ink.ziip.ohmytransfer.OhMyTransferPlugin;
 import ink.ziip.ohmytransfer.config.Settings;
-import ink.ziip.ohmytransfer.ticket.TicketCodec;
-import ink.ziip.ohmytransfer.ticket.TransferTicket;
+import ink.ziip.ohmytransfer.ticket.TransferTicketService;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.command.brigadier.argument.ArgumentTypes;
@@ -21,9 +20,10 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
-import java.security.SecureRandom;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
+import java.util.logging.Level;
 
 /**
  * {@code /omt <server>}, {@code /omt <player> <server>} and {@code /omt reload}.
@@ -32,20 +32,24 @@ public final class OmtCommand {
 
     public static final String ADMIN_PERMISSION = "omt.use";
     public static final String SELF_PERMISSION = "omt.self";
-    private static final SecureRandom RANDOM = new SecureRandom();
-
+    static final String NAME = "omt";
+    static final String ALIAS = "server";
+    static final String DESCRIPTION = "Transfer a player to another server with a signed ticket";
+    static final String RELOAD = "reload";
     private final OhMyTransferPlugin plugin;
+    private final TransferTicketService tickets;
 
-    public OmtCommand(OhMyTransferPlugin plugin) {
+    public OmtCommand(OhMyTransferPlugin plugin, TransferTicketService tickets) {
         this.plugin = plugin;
+        this.tickets = tickets;
     }
 
     public LiteralCommandNode<CommandSourceStack> build() {
-        return Commands.literal("omt")
+        return Commands.literal(NAME)
                 .requires(source -> canAdmin(source) || canSelf(source))
-                .then(Commands.literal("reload")
+                .then(Commands.literal(RELOAD)
                         .requires(OmtCommand::canAdmin)
-                        .executes(this::reload))
+                        .executes(ctx -> reload(ctx.getSource().getSender())))
                 // Must be registered before <player>: "/omt survival" also parses as an incomplete
                 // "/omt <player>", and Brigadier picks the first of two equally complete parses.
                 .then(serverArgument()
@@ -58,11 +62,19 @@ public final class OmtCommand {
     }
 
     private static boolean canAdmin(CommandSourceStack source) {
-        return source.getSender().hasPermission(ADMIN_PERMISSION);
+        return canAdmin(source.getSender());
     }
 
     private static boolean canSelf(CommandSourceStack source) {
-        return source.getExecutor() instanceof Player && source.getSender().hasPermission(SELF_PERMISSION);
+        return canSelf(source.getSender(), source.getExecutor() instanceof Player);
+    }
+
+    static boolean canAdmin(CommandSender sender) {
+        return sender.hasPermission(ADMIN_PERMISSION);
+    }
+
+    static boolean canSelf(CommandSender sender, boolean playerExecutor) {
+        return playerExecutor && sender.hasPermission(SELF_PERMISSION);
     }
 
     private RequiredArgumentBuilder<CommandSourceStack, String> serverArgument() {
@@ -71,14 +83,16 @@ public final class OmtCommand {
 
     private CompletableFuture<Suggestions> suggestServers(CommandContext<CommandSourceStack> ctx,
                                                           SuggestionsBuilder builder) {
-        Settings settings = plugin.settings();
-        String remaining = builder.getRemainingLowerCase();
-        for (String name : settings.servers().keySet()) {
-            if (!name.equals(settings.serverId()) && name.toLowerCase(Locale.ROOT).startsWith(remaining)) {
-                builder.suggest(name);
-            }
-        }
+        serverSuggestions(builder.getRemainingLowerCase()).forEach(builder::suggest);
         return builder.buildFuture();
+    }
+
+    List<String> serverSuggestions(String prefix) {
+        Settings settings = plugin.settings();
+        String remaining = prefix.toLowerCase(Locale.ROOT);
+        return settings.servers().keySet().stream()
+                .filter(name -> !name.equals(settings.serverId()) && name.toLowerCase(Locale.ROOT).startsWith(remaining))
+                .toList();
     }
 
     private int transferSelf(CommandContext<CommandSourceStack> ctx) {
@@ -93,26 +107,18 @@ public final class OmtCommand {
         return transfer(ctx.getSource().getSender(), player, StringArgumentType.getString(ctx, "server"));
     }
 
-    private int transfer(CommandSender sender, Player player, String serverName) {
-        Settings settings = plugin.settings();
-        Settings.Target target = settings.servers().get(serverName);
-        if (target == null) {
-            sender.sendMessage(Component.text("未知服务器: " + serverName, NamedTextColor.RED));
+    int transfer(CommandSender sender, Player player, String serverName) {
+        Settings.Target target;
+        try {
+            target = tickets.writeTicket(plugin.settings(), player, serverName);
+        } catch (TransferTicketService.Failure error) {
+            sender.sendMessage(Component.text(error.getMessage(), NamedTextColor.RED));
+            if (error.getCause() != null) {
+                plugin.getLogger().log(Level.WARNING, "Could not write transfer ticket for " + player.getName(),
+                        error.getCause());
+            }
             return 0;
         }
-        if (serverName.equals(settings.serverId())) {
-            sender.sendMessage(Component.text(serverName + " 就是当前服务器", NamedTextColor.RED));
-            return 0;
-        }
-
-        long now = System.currentTimeMillis();
-        byte[] nonce = new byte[TransferTicket.NONCE_LENGTH];
-        RANDOM.nextBytes(nonce);
-        TransferTicket ticket = new TransferTicket(settings.serverId(), serverName, player.getUniqueId(),
-                player.getName(), now, now + settings.ticketTtlMillis(), nonce);
-
-        // Both packets go out on the same connection in order, so the cookie is stored before the client leaves.
-        player.storeCookie(settings.cookieKey(), TicketCodec.encode(ticket, settings.secret()));
         player.transfer(target.host(), target.port());
 
         plugin.getLogger().info(sender.getName() + " transferred " + player.getName() + " to "
@@ -126,8 +132,7 @@ public final class OmtCommand {
         return Command.SINGLE_SUCCESS;
     }
 
-    private int reload(CommandContext<CommandSourceStack> ctx) {
-        CommandSender sender = ctx.getSource().getSender();
+    int reload(CommandSender sender) {
         try {
             plugin.reloadSettings();
             sender.sendMessage(Component.text("OhMyTransfer 配置已重载", NamedTextColor.GREEN));

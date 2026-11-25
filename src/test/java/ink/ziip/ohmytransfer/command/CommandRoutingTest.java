@@ -114,13 +114,23 @@ class CommandRoutingTest {
     @Test
     void filterLeavesOnlyServersForSelfOnlyPlayers() {
         Suggestions leaked = dispatcher.getCompletionSuggestions(dispatcher.parse("omt ", SELF)).join();
-        Suggestions filtered = SuggestionFilterListener.restrictToServers("/omt ", leaked, Set.of("survival"));
-        assertEquals(List.of("survival"), filtered.getList().stream().map(Suggestion::getText).toList());
+        Set<String> labels = Set.of("omt", "ohmytransfer:omt", "server", "ohmytransfer:server");
+        Set<String> servers = Set.of("survival");
+        for (String input : List.of("/omt ", "/OhMyTransfer:omt su", "/server ", "/ohmytransfer:server ")) {
+            Suggestions filtered = SuggestionFilterListener.restrictToServers(input, leaked, labels, servers);
+            assertEquals(List.of("survival"), filtered.getList().stream().map(Suggestion::getText).toList(), input);
+        }
+        for (String input : List.of("/omtx ", "/servers ", "/other:server ", "/tp ", "/server")) {
+            assertNull(SuggestionFilterListener.restrictToServers(input, leaked, labels, servers), input);
+        }
+        assertNull(SuggestionFilterListener.restrictToServers("/omt ", leaked, labels,
+                Set.of("survival", "reload", "Steve")));
+    }
 
-        assertEquals(List.of("survival"), SuggestionFilterListener.restrictToServers("/OhMyTransfer:omt su",
-                leaked, Set.of("survival")).getList().stream().map(Suggestion::getText).toList());
-        assertNull(SuggestionFilterListener.restrictToServers("/omtx ", leaked, Set.of("survival")));
-        assertNull(SuggestionFilterListener.restrictToServers("/tp ", leaked, Set.of("survival")));
-        assertNull(SuggestionFilterListener.restrictToServers("/omt ", leaked, Set.of("survival", "reload", "Steve")));
+    @Test
+    void filterLeavesServerAliasAloneWhenNotRegistered() {
+        Suggestions leaked = dispatcher.getCompletionSuggestions(dispatcher.parse("omt ", SELF)).join();
+        assertNull(SuggestionFilterListener.restrictToServers("/server ", leaked,
+                Set.of("omt", "ohmytransfer:omt", "ohmytransfer:server"), Set.of("survival")));
     }
 }

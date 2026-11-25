@@ -27,10 +27,36 @@ receiver:
   match-by: uuid
   # 即使 require-ticket 为 true 也允许直连的玩家 UUID。
   bypass-uuids: []
+  # 允许 Floodgate 基岩版玩家免票据验证直连本服。
+  # 仅在安装 Floodgate 时生效；开启后任何 Floodgate 玩家都可以绕过票据校验。
+  floodgate-bypass: true
   # 等待客户端返回 cookie 的超时（毫秒）。
   cookie-timeout-millis: 3000
   # 拒绝时显示给玩家的消息（MiniMessage 格式）。
   deny-message: "<red>请通过服务器传送进入本服。</red>"
+
+# 地图模组兼容：向客户端发送稳定的世界 ID，避免同一地址下多个世界串图。
+# 启用后，已有玩家的地图目录会切换为按世界 ID 命名；建议在开服前启用。
+map-compat:
+  # 总开关，默认关闭。
+  enabled: false
+  # Xaero's Minimap、Xaero's World Map 以及 Diorama。
+  xaero: true
+  # JourneyMap、VoxelMap。若本服安装 JourneyMap Paper 插件，由它处理此频道。
+  world-info: true
+  # Xaero/Diorama 世界 ID 初发和补发的总次数，范围 1–5。
+  join-repeat: 3
+  # 支持 serverIdentity 的 VoxelMap 可跨地址使用同一个地图根目录。
+  # 留空则保留原行为。需要共享根目录的服务器填写同一个小写名称，例如 my-network。
+  # 安装 VoxelMap Paper 插件时，改用它的 serverIdentity 配置。
+  voxelmap-server-identity: ""
+
+# Wormholes 原生 packet 跨服门签票。只在安装 Wormholes 时生效。
+wormholes:
+  enabled: true
+  # 键为 Wormholes 对端名，值为 OMT servers 中的 ID，区分大小写。
+  # 未映射的对端使用同名 OMT ID；映射值必须是已配置的目标。
+  server-map: {}
 
 # 可传送的目标服务器：/omt <player> <键名>
 servers:

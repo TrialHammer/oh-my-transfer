@@ -57,12 +57,29 @@ class ConfigUpdaterTest {
         config.setDefaults(defaults); // same setup as JavaPlugin#reloadConfig
 
         List<String> added = ConfigUpdater.addMissingKeys(config, defaults, Set.of("servers"));
-        assertEquals(List.of("receiver.match-by"), added);
+        assertEquals(List.of(
+                "receiver.match-by",
+                "receiver.floodgate-bypass",
+                "map-compat.enabled",
+                "map-compat.xaero",
+                "map-compat.world-info",
+                "map-compat.join-repeat",
+                "map-compat.voxelmap-server-identity",
+                "wormholes.enabled"), added);
 
         // Round-trip through the file format, as saveConfig() would.
         YamlConfiguration saved = load(config.saveToString());
         assertEquals("uuid", saved.getString("receiver.match-by"));
         assertFalse(saved.getComments("receiver.match-by").isEmpty(), "comments of the new option are copied");
+        assertTrue(saved.getBoolean("receiver.floodgate-bypass"));
+        assertFalse(saved.getComments("receiver.floodgate-bypass").isEmpty(),
+                "comments of the new option are copied");
+        assertFalse(saved.getBoolean("map-compat.enabled"));
+        assertTrue(saved.getBoolean("map-compat.xaero"));
+        assertTrue(saved.getBoolean("map-compat.world-info"));
+        assertEquals(3, saved.getInt("map-compat.join-repeat"));
+        assertEquals("", saved.getString("map-compat.voxelmap-server-identity"));
+        assertFalse(saved.getComments("map-compat.voxelmap-server-identity").isEmpty());
 
         assertEquals("survival", saved.getString("server-id"));
         assertEquals(10, saved.getInt("ticket-ttl-seconds"));

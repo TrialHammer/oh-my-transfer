@@ -43,12 +43,18 @@ public final class TicketVerifyListener implements Listener {
 
     private final OhMyTransferPlugin plugin;
     private final NonceCache nonces;
+    private final FloodgateSupport floodgateSupport;
     /** Players whose validated ticket cookie should be cleared at the next writable phase. */
     private final Map<UUID, Long> pendingCookieClears = new ConcurrentHashMap<>();
 
     public TicketVerifyListener(OhMyTransferPlugin plugin, NonceCache nonces) {
         this.plugin = plugin;
         this.nonces = nonces;
+        this.floodgateSupport = FloodgateSupport.detect();
+        if (floodgateSupport != null) {
+            plugin.getLogger().info("Floodgate detected: Bedrock players can bypass ticket checks when "
+                    + "receiver.floodgate-bypass is enabled.");
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -63,6 +69,12 @@ public final class TicketVerifyListener implements Listener {
 
         if (settings.bypassUuids().contains(playerId)) {
             plugin.getLogger().info("Allowed " + name + ": bypass UUID");
+            return;
+        }
+
+        if (settings.floodgateBypass() && floodgateSupport != null
+                && floodgateSupport.isFloodgatePlayer(playerId)) {
+            plugin.getLogger().info("Allowed " + name + ": Floodgate player");
             return;
         }
 

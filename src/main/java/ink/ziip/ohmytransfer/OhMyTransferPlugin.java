@@ -1,12 +1,15 @@
 package ink.ziip.ohmytransfer;
 
 import ink.ziip.ohmytransfer.command.OmtCommand;
+import ink.ziip.ohmytransfer.command.OmtCommandRegistration;
 import ink.ziip.ohmytransfer.command.SuggestionFilterListener;
 import ink.ziip.ohmytransfer.config.ConfigUpdater;
 import ink.ziip.ohmytransfer.config.Settings;
 import ink.ziip.ohmytransfer.listener.TicketVerifyListener;
+import ink.ziip.ohmytransfer.map.MapCompatListener;
 import ink.ziip.ohmytransfer.ticket.NonceCache;
-import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import ink.ziip.ohmytransfer.ticket.TransferTicketService;
+import ink.ziip.ohmytransfer.wormholes.WormholesBridge;
 import org.bukkit.configuration.Configuration;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -23,6 +26,9 @@ public final class OhMyTransferPlugin extends JavaPlugin {
 
     private final NonceCache nonces = new NonceCache();
     private volatile Settings settings;
+    private MapCompatListener mapCompatListener;
+    private WormholesBridge wormholesBridge;
+    private OmtCommandRegistration commandRegistration;
 
     @Override
     public void onEnable() {
@@ -42,11 +48,19 @@ public final class OhMyTransferPlugin extends JavaPlugin {
 
         TicketVerifyListener listener = new TicketVerifyListener(this, nonces);
         getServer().getPluginManager().registerEvents(listener, this);
-        getServer().getPluginManager().registerEvents(new SuggestionFilterListener(this), this);
+        SuggestionFilterListener suggestionFilter = new SuggestionFilterListener(this);
+        getServer().getPluginManager().registerEvents(suggestionFilter, this);
+        mapCompatListener = new MapCompatListener(this);
+        getServer().getPluginManager().registerEvents(mapCompatListener, this);
+        mapCompatListener.reload();
 
-        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
-                event.registrar().register(new OmtCommand(this).build(),
-                        "Transfer a player to another server with a signed ticket"));
+        TransferTicketService tickets = new TransferTicketService();
+        wormholesBridge = new WormholesBridge(this, tickets);
+        getServer().getPluginManager().registerEvents(wormholesBridge, this);
+        wormholesBridge.reload();
+
+        commandRegistration = new OmtCommandRegistration(this, new OmtCommand(this, tickets), suggestionFilter);
+        commandRegistration.start();
 
         getServer().getScheduler().runTaskTimerAsynchronously(this, () -> {
             long now = System.currentTimeMillis();
@@ -68,6 +82,27 @@ public final class OhMyTransferPlugin extends JavaPlugin {
             saveConfig();
         }
         settings = Settings.load(getConfig());
+        if (mapCompatListener != null) {
+            mapCompatListener.reload();
+        }
+        if (wormholesBridge != null) {
+            wormholesBridge.reload();
+        }
+    }
+
+    @Override
+    public void onDisable() {
+        if (commandRegistration != null) {
+            commandRegistration.stop();
+            commandRegistration = null;
+        }
+        if (wormholesBridge != null) {
+            wormholesBridge.shutdown();
+            wormholesBridge = null;
+        }
+        if (mapCompatListener != null) {
+            mapCompatListener.shutdown();
+        }
     }
 
     public Settings settings() {

@@ -26,8 +26,11 @@ public record Settings(
         boolean requireTicket,
         IdentityMatch identityMatch,
         Set<UUID> bypassUuids,
+        boolean floodgateBypass,
         long cookieTimeoutMillis,
         Component denyMessage,
+        MapCompat mapCompat,
+        Wormholes wormholes,
         Map<String, Target> servers
 ) {
     public static final int MIN_SECRET_BYTES = 32;
@@ -35,10 +38,26 @@ public record Settings(
      * Server names are typed as a Brigadier {@code word} argument and must not contain '.' (YAML path separator).
      */
     private static final Pattern SERVER_NAME = Pattern.compile("[0-9A-Za-z_+-]+");
+    private static final Pattern VOXELMAP_IDENTITY = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
     /** Names taken by literal subcommands of /omt. */
     private static final Set<String> RESERVED_SERVER_NAMES = Set.of("reload");
 
     public record Target(String host, int port) {
+    }
+
+    /**
+     * Server-side map-mod compatibility. Disabled by default because switching an
+     * existing world to a server-provided world ID changes where clients keep their
+     * map data.
+     */
+    public record MapCompat(boolean enabled, boolean xaero, boolean worldInfo, int joinRepeat,
+                            String voxelMapServerIdentity) {
+    }
+
+    public record Wormholes(boolean enabled, boolean mapValid, Map<String, String> serverMap) {
+        public String targetId(String peerName) {
+            return serverMap.getOrDefault(peerName, peerName);
+        }
     }
 
     /**
@@ -94,6 +113,20 @@ public record Settings(
             }
         }
 
+        String voxelMapIdentity = config.getString("map-compat.voxelmap-server-identity", "").trim();
+        if (!voxelMapIdentity.isEmpty() && !VOXELMAP_IDENTITY.matcher(voxelMapIdentity).matches()) {
+            throw new IllegalArgumentException("map-compat.voxelmap-server-identity must be empty or a "
+                    + "1..64 character lowercase name using letters, digits, '_' or '-' and starting with a letter or digit");
+        }
+        Map<String, String> wormholesServers = new LinkedHashMap<>();
+        Object wormholesMapValue = config.get("wormholes.server-map");
+        if (wormholesMapValue instanceof ConfigurationSection wormholesMap) {
+            for (var entry : wormholesMap.getValues(false).entrySet()) {
+                // Invalid values must not fall back to signing a ticket for a same-named target.
+                wormholesServers.put(entry.getKey(), entry.getValue() instanceof String value ? value.trim() : "");
+            }
+        }
+
         return new Settings(
                 serverId,
                 secret,
@@ -103,9 +136,19 @@ public record Settings(
                 config.getBoolean("receiver.require-ticket", true),
                 identityMatch,
                 Set.copyOf(bypass),
+                config.getBoolean("receiver.floodgate-bypass", true),
                 Math.max(100, config.getLong("receiver.cookie-timeout-millis", 3000)),
                 MiniMessage.miniMessage().deserialize(
                         config.getString("receiver.deny-message", "<red>请通过服务器传送进入本服。</red>")),
+                new MapCompat(
+                        config.getBoolean("map-compat.enabled", false),
+                        config.getBoolean("map-compat.xaero", true),
+                        config.getBoolean("map-compat.world-info", true),
+                        Math.clamp(config.getInt("map-compat.join-repeat", 3), 1, 5),
+                        voxelMapIdentity),
+                new Wormholes(config.getBoolean("wormholes.enabled", true),
+                        wormholesMapValue == null || wormholesMapValue instanceof ConfigurationSection,
+                        Map.copyOf(wormholesServers)),
                 Collections.unmodifiableMap(servers)
         );
     }

@@ -8,8 +8,8 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Hides admin-only suggestions from players who may only use {@code /omt <server>}.
@@ -21,12 +21,15 @@ import java.util.regex.Pattern;
  */
 public final class SuggestionFilterListener implements Listener {
 
-    private static final Pattern OMT_COMMAND = Pattern.compile("^/(?:ohmytransfer:)?omt ", Pattern.CASE_INSENSITIVE);
-
     private final OhMyTransferPlugin plugin;
+    private volatile Set<String> commandLabels = Set.of();
 
     public SuggestionFilterListener(OhMyTransferPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    public void setCommandLabels(Set<String> commandLabels) {
+        this.commandLabels = Set.copyOf(commandLabels);
     }
 
     @EventHandler
@@ -34,7 +37,7 @@ public final class SuggestionFilterListener implements Listener {
         if (event.getPlayer().hasPermission(OmtCommand.ADMIN_PERMISSION)) {
             return;
         }
-        Suggestions filtered = restrictToServers(event.getBuffer(), event.getSuggestions(),
+        Suggestions filtered = restrictToServers(event.getBuffer(), event.getSuggestions(), commandLabels,
                 plugin.settings().servers().keySet());
         if (filtered != null) {
             event.setSuggestions(filtered);
@@ -44,8 +47,11 @@ public final class SuggestionFilterListener implements Listener {
     /**
      * @return the suggestions without entries that are not server names, or {@code null} if nothing changes
      */
-    static Suggestions restrictToServers(String buffer, Suggestions suggestions, Set<String> servers) {
-        if (!OMT_COMMAND.matcher(buffer).find()) {
+    static Suggestions restrictToServers(String buffer, Suggestions suggestions, Set<String> commandLabels,
+                                         Set<String> servers) {
+        int separator = buffer.indexOf(' ');
+        if (separator <= 1 || buffer.charAt(0) != '/'
+                || !commandLabels.contains(buffer.substring(1, separator).toLowerCase(Locale.ROOT))) {
             return null;
         }
         List<Suggestion> kept = suggestions.getList().stream()
